@@ -1,152 +1,196 @@
 import cv2
 import mediapipe as mp
-import sqlite3
+import time
 
-# Hand Gesture Detection Class
-class HandDetector:
-    def __init__(self, detection_confidence=0.7, tracking_confidence=0.7):
-        self.hands = mp.solutions.hands.Hands(
-            min_detection_confidence=detection_confidence,
-            min_tracking_confidence=tracking_confidence
-        )
+
+class TouchlessTray:
+    def __init__(self):
+        # Initialize Mediapipe Hands
+        self.mp_hands = mp.solutions.hands
+        self.hands = self.mp_hands.Hands()
         self.drawing_utils = mp.solutions.drawing_utils
 
-    def detect_hand(self, frame):
+        # State management
+        self.current_state = "MainMenu"  # Can be MainMenu, StartOrder, ViewOrder, Checkout
+        self.order = {}  # Store ordered items with quantities and prices
+        self.feedback_message = ""  # Temporary feedback message
+        self.feedback_timer = 0  # Timer for feedback message display
+
+    def detect_hand_position(self, frame):
+        """Detects hand position and landmarks."""
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.hands.process(rgb_frame)
-        return results.multi_hand_landmarks
 
-    def draw_hand_landmarks(self, frame, landmarks):
-        if landmarks:
-            for hand_landmarks in landmarks:
+        if results.multi_hand_landmarks:
+            for hand_landmarks in results.multi_hand_landmarks:
                 self.drawing_utils.draw_landmarks(
-                    frame, hand_landmarks, mp.solutions.hands.HAND_CONNECTIONS
+                    frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS
                 )
-        return frame
-
-    def get_hand_position(self, landmarks, frame_shape):
-        if not landmarks:
-            return None
-        hand_landmarks = landmarks[0]
-        height, width, _ = frame_shape
-        x = int(hand_landmarks.landmark[mp.solutions.hands.HandLandmark.WRIST].x * width)
-        y = int(hand_landmarks.landmark[mp.solutions.hands.HandLandmark.WRIST].y * height)
-        return x, y
-
-# Menu Class
-class Menu:
-    def __init__(self):
-        self.items = ["Sandwich", "Drinks", "Salad"]
-        self.suboptions = {
-            "Sandwich": ["White Bread", "Whole Wheat Bread", "Gluten-Free Bread"],
-            "Drinks": ["Coke", "Water", "Lemonade"],
-            "Salad": ["Caesar", "Greek", "Garden"]
-        }
-        self.selected_option = None
-
-    def display_menu(self, frame):
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        for idx, item in enumerate(self.items):
-            cv2.putText(frame, item, (50, 50 + (idx * 40)), font, 1, (0, 255, 0), 2, cv2.LINE_AA)
-        if self.selected_option:
-            cv2.putText(frame, f"Selected: {self.selected_option}", (50, 350), font, 1, (0, 0, 255), 2, cv2.LINE_AA)
-
-    def highlight_option(self, x, y, frame):
-        option_idx = int(y // 50)
-        if 0 <= option_idx < len(self.items):
-            self.selected_option = self.items[option_idx]
-            return self.selected_option
+                # Get position of index fingertip
+                index_finger_tip = hand_landmarks.landmark[self.mp_hands.HandLandmark.INDEX_FINGER_TIP]
+                h, w, _ = frame.shape
+                x, y = int(index_finger_tip.x * w), int(index_finger_tip.y * h)
+                return x, y
         return None
 
-# Order Manager Class
-class OrderManager:
-    def __init__(self):
-        self.order = []
+    def display_feedback(self, frame):
+        """Displays feedback messages for user actions."""
+        if time.time() - self.feedback_timer < 2:  # Display message for 2 seconds
+            cv2.putText(frame, self.feedback_message, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
 
-    def add_item(self, item):
-        self.order.append(item)
+    def render_main_menu(self, frame):
+        """Renders the main menu."""
+        cv2.rectangle(frame, (100, 50), (400, 150), (0, 255, 0), -1)
+        cv2.putText(frame, "Start Order", (150, 110), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
 
-    def get_order(self):
-        return self.order
+        cv2.rectangle(frame, (100, 200), (400, 300), (255, 0, 0), -1)
+        cv2.putText(frame, "View Order", (150, 260), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
 
-    def reset_order(self):
-        self.order = []
+        cv2.rectangle(frame, (100, 350), (400, 450), (0, 0, 255), -1)
+        cv2.putText(frame, "Checkout", (150, 410), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
 
-# Database Manager Class
-class DatabaseManager:
-    def __init__(self, db_name="orders.db"):
-        self.conn = sqlite3.connect(db_name)
-        self.cursor = self.conn.cursor()
+        cv2.rectangle(frame, (100, 500), (400, 600), (255, 255, 0), -1)
+        cv2.putText(frame, "Exit", (200, 560), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
 
-    def create_order_table(self):
-        self.cursor.execute('''CREATE TABLE IF NOT EXISTS orders
-                               (order_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                items TEXT)''')
-        self.conn.commit()
+    def render_start_order(self, frame):
+        """Renders the order menu."""
+        cv2.rectangle(frame, (100, 50), (400, 150), (0, 255, 0), -1)
+        cv2.putText(frame, "Burger $5", (150, 110), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
 
-    def insert_order(self, order):
-        order_items = ', '.join(order)
-        self.cursor.execute('''INSERT INTO orders (items) VALUES (?)''', (order_items,))
-        self.conn.commit()
+        cv2.rectangle(frame, (100, 200), (400, 300), (255, 0, 0), -1)
+        cv2.putText(frame, "Pizza $8", (150, 260), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
 
-    def retrieve_orders(self):
-        self.cursor.execute('''SELECT * FROM orders''')
-        return self.cursor.fetchall()
+        cv2.rectangle(frame, (100, 350), (400, 450), (0, 0, 255), -1)
+        cv2.putText(frame, "Back", (200, 410), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
 
-# Main Application
-def main():
-    hand_detector = HandDetector()
-    menu = Menu()
-    order_manager = OrderManager()
-    database_manager = DatabaseManager("orders.db")
-    database_manager.create_order_table()
+    def render_view_order(self, frame):
+        """Renders the current order."""
+        y = 50
+        cv2.putText(frame, "Your Order:", (50, y), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        y += 50
+        for idx, (item, details) in enumerate(self.order.items()):
+            cv2.putText(
+                frame,
+                f"{item}: {details['quantity']} x ${details['price']}  [Del: {idx+1}]",
+                (50, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 255, 255),
+                2,
+            )
+            y += 50
 
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("Error: Cannot access the camera")
-        return
+        cv2.rectangle(frame, (100, 500), (400, 600), (0, 0, 255), -1)
+        cv2.putText(frame, "Back", (200, 560), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
 
-    selected_option = None
+    def render_checkout(self, frame):
+        """Renders the checkout menu."""
+        total_cost = sum(details['quantity'] * details['price'] for details in self.order.values())
+        cv2.putText(frame, f"Total: ${total_cost}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("Error: Cannot read frame from the camera")
-            break
+        cv2.rectangle(frame, (100, 200), (400, 300), (0, 255, 0), -1)
+        cv2.putText(frame, "Confirm", (200, 260), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
 
-        frame = cv2.flip(frame, 1)
+        cv2.rectangle(frame, (100, 350), (400, 450), (255, 0, 0), -1)
+        cv2.putText(frame, "Back", (200, 410), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
 
-        landmarks = hand_detector.detect_hand(frame)
-        hand_detector.draw_hand_landmarks(frame, landmarks)
+        cv2.rectangle(frame, (100, 500), (400, 600), (0, 0, 255), -1)
+        cv2.putText(frame, "Exit", (200, 560), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
 
-        if landmarks:
-            hand_position = hand_detector.get_hand_position(landmarks, frame.shape)
+    def add_to_order(self, item, price):
+        """Adds an item to the order."""
+        if item in self.order:
+            self.order[item]["quantity"] += 1
+        else:
+            self.order[item] = {"quantity": 1, "price": price}
+        self.feedback_message = f"Item Added: {item}"
+        self.feedback_timer = time.time()
 
-            if hand_position:
-                x, y = hand_position
-                selected_option = menu.highlight_option(x, y, frame)
+    def delete_from_order(self, idx):
+        """Deletes an item from the order by index."""
+        if idx < len(self.order):
+            item = list(self.order.keys())[idx]
+            del self.order[item]
+            self.feedback_message = f"Item Removed: {item}"
+            self.feedback_timer = time.time()
 
-        menu.display_menu(frame)
+    # Rest of the implementation...
 
-        cv2.imshow("Hand Gesture Menu", frame)
 
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord('q'):  # Quit the application
-            break
-        elif key == ord('s') and selected_option:  # Select the item
-            order_manager.add_item(selected_option)
-            print(f"Added to order: {selected_option}")
-        elif key == ord('v'):  # View current order
-            print("Current Order:")
-            for item in order_manager.get_order():
-                print(f"- {item}")
-        elif key == ord('c'):  # Confirm and save the order
-            database_manager.insert_order(order_manager.get_order())
-            print("Order saved!")
-            order_manager.reset_order()
+    def handle_selection(self, x, y):
+        """Handles menu selections based on hand position."""
+        if self.current_state == "MainMenu":
+            if 50 < x < 250:
+                if 100 < y < 200:
+                    self.current_state = "StartOrder"
+                elif 250 < y < 350:
+                    self.current_state = "ViewOrder"
+                elif 400 < y < 500:
+                    self.current_state = "Checkout"
+                elif 550 < y < 650:
+                    return False  # Exit application
 
-    cap.release()
-    cv2.destroyAllWindows()
+        elif self.current_state == "StartOrder":
+            if 50 < x < 250:
+                if 100 < y < 200:
+                    self.add_to_order("Burger", 5)
+                elif 250 < y < 350:
+                    self.add_to_order("Pizza", 8)
+                elif 400 < y < 500:
+                    self.current_state = "MainMenu"
 
-if __name__ == "__main__":
-    main()
+        elif self.current_state == "ViewOrder":
+            if 500 < y < 600:
+                self.current_state = "MainMenu"
+
+        elif self.current_state == "Checkout":
+            if 400 < y < 500:
+                self.order = {}  # Clear the order
+                self.current_state = "MainMenu"
+            elif 550 < y < 650:
+                self.current_state = "MainMenu"
+
+        return True
+
+    def add_to_order(self, item, price):
+        """Adds an item to the order."""
+        if item in self.order:
+            self.order[item]["quantity"] += 1
+        else:
+            self.order[item] = {"quantity": 1, "price": price}
+
+    def run(self):
+        """Runs the main application loop."""
+        cap = cv2.VideoCapture(0)
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            frame = cv2.flip(frame, 1)
+            hand_pos = self.detect_hand_position(frame)
+
+            if self.current_state == "MainMenu":
+                self.render_main_menu(frame)
+            elif self.current_state == "StartOrder":
+                self.render_start_order(frame)
+            elif self.current_state == "ViewOrder":
+                self.render_view_order(frame)
+            elif self.current_state == "Checkout":
+                self.render_checkout(frame)
+
+            if hand_pos:
+                x, y = hand_pos
+                if not self.handle_selection(x, y):
+                    break
+
+            cv2.imshow("Touchless Tray", frame)
+            if cv2.waitKey(1) & 0xFF == 27:
+                break
+
+        cap.release()
+        cv2.destroyAllWindows()
+
+# Run the application
+app = TouchlessTray()
+app.run()
